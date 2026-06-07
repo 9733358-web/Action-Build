@@ -998,6 +998,11 @@ jobs:
             fi
           fi
 
+          if [ "$KMI" = "android16-6.12" ]; then
+            echo "Applying SukiSU Ultra android16-6.12 compatibility patch"
+            patch -p1 -F 3 --forward < "$GITHUB_WORKSPACE/patches/sukisu_compat_android16_6.12.patch"
+          fi
+
           source $REJ_CHECKER
           check_rejects .
 
