@@ -1000,7 +1000,43 @@ jobs:
 
           if [ "$KMI" = "android16-6.12" ]; then
             echo "Applying SukiSU Ultra android16-6.12 compatibility patch"
-            patch -p1 -F 3 --forward < "$GITHUB_WORKSPACE/patches/sukisu_compat_android16_6.12.patch"
+            python3 - <<'PY'
+          from pathlib import Path
+
+          lsm = Path("drivers/kernelsu/hook/lsm_hook.c")
+          text = lsm.read_text()
+          marker = "\nvoid __init ksu_lsm_hook_init(void)\n"
+          lsm_id = """#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0)
+          static const struct lsm_id ksu_lsmid = {
+              .name = "ksu",
+              .id = LSM_ID_UNDEF,
+          };
+          #endif
+
+          """
+          if "static const struct lsm_id ksu_lsmid" not in text:
+              if marker not in text:
+                  raise SystemExit("ksu_lsm_hook_init marker not found")
+              text = text.replace(marker, "\n" + lsm_id + "void __init ksu_lsm_hook_init(void)\n", 1)
+
+          old = '#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)\n    security_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks), "ksu");'
+          new = '#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0)\n    security_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks), &ksu_lsmid);\n#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)\n    security_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks), "ksu");'
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif "&ksu_lsmid" not in text:
+              raise SystemExit("security_add_hooks marker not found")
+          lsm.write_text(text)
+
+          super_access = Path("drivers/kernelsu/kpm/super_access.c")
+          text = super_access.read_text()
+          old = "DEFINE_MEMBER(netlink_kernel_cfg, input)\nDEFINE_MEMBER(netlink_kernel_cfg, cb_mutex)\nDEFINE_MEMBER(netlink_kernel_cfg, bind)"
+          new = "DEFINE_MEMBER(netlink_kernel_cfg, input)\n#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0)\nDEFINE_MEMBER(netlink_kernel_cfg, cb_mutex)\n#endif\nDEFINE_MEMBER(netlink_kernel_cfg, bind)"
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif "#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0)\nDEFINE_MEMBER(netlink_kernel_cfg, cb_mutex)" not in text:
+              raise SystemExit("netlink_kernel_cfg cb_mutex marker not found")
+          super_access.write_text(text)
+          PY
           fi
 
           source $REJ_CHECKER
