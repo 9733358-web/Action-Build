@@ -324,6 +324,33 @@ jobs:
           # 传递组合信息
           echo "value=${FILE_BASE}_Android${ANDROID_VERSION}" >> "$GITHUB_OUTPUT"
 
+      - name: Ace6T Strict Manifest Guard
+        if: ${{ github.event.inputs.FILE == 'oneplus_ace_6t' }}
+        run: |
+          set -euo pipefail
+          XML_PATH="$GITHUB_WORKSPACE/.repo/manifests_fallback/${{ github.event.inputs.FILE }}.xml"
+          README_PATH="$GITHUB_WORKSPACE/.repo/manifests_fallback/README.md"
+          echo "=== Ace6T strict manifest guard ==="
+          echo "Device must match: PLR110 / OP6117L1 / SM8845 / canoe / Android16 / KMI android16-5 / 4K / SPL 2026-05-01"
+          echo "MANIFEST=${MANIFEST_REPO}/${MANIFEST_REPO_NAME}@${MANIFEST_BRANCH}"
+          echo "CPU=${CPU:-} CPUD=${CPUD:-} ANDROID_VERSION=${ANDROID_VERSION:-} BUILD_METHOD=${BUILD_METHOD:-}"
+          test -s "$XML_PATH"
+          test -s "$README_PATH"
+          test "${MANIFEST_REPO}/${MANIFEST_REPO_NAME}" = "OnePlusOSS/kernel_manifest"
+          test "${MANIFEST_BRANCH}" = "oneplus/sm8845"
+          test "${CPU}" = "sm8845"
+          test "${CPUD}" = "canoe"
+          test "${BUILD_METHOD}" = "perf"
+          test "${ANDROID_VERSION}" = "16.0.0"
+          grep -q 'name="android_kernel_common_oneplus_sm8845"' "$XML_PATH"
+          grep -q 'path="kernel_platform/common"' "$XML_PATH"
+          grep -q 'name="android_kernel_oneplus_sm8845"' "$XML_PATH"
+          grep -q 'path="kernel_platform/soc-repo"' "$XML_PATH"
+          grep -q 'name="android_kernel_modules_and_devicetree_oneplus_sm8845"' "$XML_PATH"
+          grep -q 'revision="oneplus/sm8845_b_16.0.0_ace_6t"' "$XML_PATH"
+          grep -q 'oplus_build_kernel.sh canoe perf' "$README_PATH"
+          echo "Ace6T strict manifest guard passed."
+
       - name: Debug Show Selected Inputs
         run: |
           echo "------------------------------"
@@ -628,6 +655,45 @@ jobs:
           echo "KV2=${KMI#*-}"       | tr -d '.' >> $GITHUB_ENV
           echo "KV3=${NEW_VERSION}"     | tr -d '.' >> $GITHUB_ENV
           echo "KERNEL_SHORT_PATCH_VERSION=$(echo $NEW_VERSION | cut -d. -f1,2 | tr '.' '_')" >> $GITHUB_ENV
+
+      - name: Ace6T Strict Source Guard
+        if: ${{ github.event.inputs.FILE == 'oneplus_ace_6t' }}
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/kernel_workspace/kernel_platform"
+          echo "=== Ace6T strict source guard ==="
+          KVER=$(awk '/^VERSION =/ {v=$3} /^PATCHLEVEL =/ {p=$3} /^SUBLEVEL =/ {s=$3} END {print v"."p"."s}' common/Makefile)
+          echo "common kernel version: $KVER"
+          test "$KVER" = "6.12.38"
+          grep -qx 'BRANCH=android16-6.12' common/build.config.constants
+          grep -qx 'KMI_GENERATION=5' common/build.config.constants
+          grep -qx 'RUSTC_VERSION=1.82.0' common/build.config.constants
+          grep -q '^MSM_ARCH=canoe$' soc-repo/build.config.msm.canoe
+          grep -q '^PAGE_SIZE=4096$' soc-repo/build.config.msm.canoe
+          grep -q '^BOOT_IMAGE_HEADER_VERSION=4$' soc-repo/build.config.msm.canoe
+          grep -q '^BUILD_INIT_BOOT_IMG=1$' soc-repo/build.config.msm.canoe
+          COMMON_SHA=$(git -C common rev-parse HEAD)
+          SOC_SHA=$(git -C soc-repo rev-parse HEAD)
+          MODULES_SHA=$(git -C "$GITHUB_WORKSPACE/kernel_workspace" rev-parse HEAD)
+          {
+            echo "device=PLR110/OP6117L1"
+            echo "soc=SM8845"
+            echo "platform=canoe"
+            echo "android=16"
+            echo "sdk=36"
+            echo "spl=2026-05-01"
+            echo "stock_kernel=6.12.38-android16-5-g844001fb8721-ab14552068-4k"
+            echo "kmi=6.12-android16-5"
+            echo "branch=android16-6.12"
+            echo "kmi_generation=5"
+            echo "page_size=4096"
+            echo "manifest=OnePlusOSS/kernel_manifest@oneplus/sm8845/oneplus_ace_6t.xml"
+            echo "build_cmd=./kernel_platform/oplus/build/oplus_build_kernel.sh canoe perf"
+            echo "common_sha=$COMMON_SHA"
+            echo "soc_repo_sha=$SOC_SHA"
+            echo "modules_dt_sha=$MODULES_SHA"
+          } | tee "$GITHUB_WORKSPACE/ace6t_source_fingerprint.txt"
+          echo "Ace6T strict source guard passed."
 
       - name: Rust Version Handling
         run: |
@@ -1655,6 +1721,35 @@ jobs:
           fi
           mv -f oImage Image
           cp Image "${GITHUB_WORKSPACE}/AnyKernel3/Image"
+
+      - name: Ace6T Strict Image Guard
+        if: ${{ github.event.inputs.FILE == 'oneplus_ace_6t' }}
+        run: |
+          set -euo pipefail
+          IMG="$GITHUB_WORKSPACE/AnyKernel3/Image"
+          EXPECTED="6.12.38-android16-5-g844001fb8721-ab14552068-4k"
+          echo "=== Ace6T strict image guard ==="
+          test -s "$IMG"
+          LINUX_VERSION_LINE=$(strings "$IMG" | grep -m1 'Linux version ' || true)
+          KREL=$(strings "$IMG" | grep -m1 -o '6\.12\.38[^[:space:]]*' || true)
+          echo "Linux version line: ${LINUX_VERSION_LINE:-<not found>}"
+          echo "Detected release: ${KREL:-<not found>}"
+          {
+            echo "expected_kernel_release=$EXPECTED"
+            echo "detected_kernel_release=${KREL:-}"
+            echo "linux_version_line=${LINUX_VERSION_LINE:-}"
+            echo "image_sha256=$(sha256sum "$IMG" | awk '{print $1}')"
+          } | tee "$GITHUB_WORKSPACE/AnyKernel3/image_release.txt"
+          cp "$GITHUB_WORKSPACE/ace6t_source_fingerprint.txt" "$GITHUB_WORKSPACE/AnyKernel3/source_fingerprint.txt"
+          if [[ "$LINUX_VERSION_LINE" != *"$EXPECTED"* ]]; then
+            echo "::error::Kernel release is not the required stock-compatible Ace6T release: $EXPECTED"
+            exit 1
+          fi
+          if [[ "$LINUX_VERSION_LINE" == *dirty* || "$LINUX_VERSION_LINE" == *OP-WILD* ]]; then
+            echo "::error::Kernel release contains forbidden marker dirty/OP-WILD"
+            exit 1
+          fi
+          echo "Ace6T strict image guard passed."
 
       - name: Download Latest SUSFS Module from CI
         if: ${{ github.event.inputs.SUSFS_CI == 'CI' && github.event.inputs.SUSFS_META != '-1' }}
